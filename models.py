@@ -31,3 +31,4 @@ class LnposPayment(BaseModel):
     pin: int
     sats: int
     payment_hash: Optional[str] = None
+    original_amount_cents: Optional[float] = None
