@@ -65,11 +65,14 @@ jobs:
         
     - name: Create release archive
       run: |
-        # Create a clean archive excluding development files
-        mkdir -p release-temp
+        # Create archive with proper directory structure for LNbits
+        EXTENSION_NAME="lnpos_extension-${{ steps.get_tag.outputs.new_tag }}"
+        
+        # Create the extension directory
+        mkdir -p "$EXTENSION_NAME"
         
         # Copy all files except those we want to exclude
-        rsync -av --progress . release-temp/ \
+        rsync -av --progress . "$EXTENSION_NAME"/ \
           --exclude='.git' \
           --exclude='.github' \
           --exclude='node_modules' \
@@ -80,15 +83,13 @@ jobs:
           --exclude='dist' \
           --exclude='build' \
           --exclude='.env' \
-          --exclude='release-temp'
+          --exclude="$EXTENSION_NAME"
           
-        # Create the archive
-        cd release-temp
-        zip -r ../lnpos_extension-${{ steps.get_tag.outputs.new_tag }}.zip .
-        cd ..
+        # Create the archive with proper directory structure
+        zip -r "$EXTENSION_NAME.zip" "$EXTENSION_NAME"
         
         # Clean up
-        rm -rf release-temp
+        rm -rf "$EXTENSION_NAME"
         
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
