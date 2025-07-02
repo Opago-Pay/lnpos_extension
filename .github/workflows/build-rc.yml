@@ -2,7 +2,8 @@ name: Build RC Release
 
 on:
   push:
-    branches: [ main ]
+    branches: 
+      - 'feature/**'  # Trigger on feature branches for testing
   workflow_dispatch:
 
 jobs:
@@ -31,15 +32,15 @@ jobs:
     - name: Run tests (if configured)
       run: |
         if [ -f "pyproject.toml" ] && command -v poetry &> /dev/null; then
-          poetry run pytest || echo "Tests not configured or failed - continuing"
+          poetry run pytest --verbose || echo "Tests not configured or failed - continuing"
         else
           echo "No test configuration found - skipping tests"
         fi
         
-    - name: Get latest RC tag
+    - name: Get latest RC tag and create new one
       id: get_tag
       run: |
-        # Get the latest tag that matches the v1.0.1-rc.* pattern
+        # Get the latest RC tag for v1.0.1
         LATEST_RC=$(git tag -l "v1.0.1-rc.*" | sort -V | tail -1)
         
         if [ -z "$LATEST_RC" ]; then
@@ -53,13 +54,13 @@ jobs:
         fi
         
         echo "new_tag=$NEW_TAG" >> $GITHUB_OUTPUT
-        echo "Creating new RC tag: $NEW_TAG"
+        echo "Creating new RC tag: $NEW_TAG for testing"
         
     - name: Create and push RC tag
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        git tag -a ${{ steps.get_tag.outputs.new_tag }} -m "Release candidate ${{ steps.get_tag.outputs.new_tag }} - Created by Cursor-MCP-MAF"
+        git tag -a ${{ steps.get_tag.outputs.new_tag }} -m "Release candidate ${{ steps.get_tag.outputs.new_tag }} from ${{ github.ref_name }} - Created by Cursor-MCP-MAF"
         git push origin ${{ steps.get_tag.outputs.new_tag }}
         
     - name: Create release archive
@@ -93,21 +94,23 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ steps.get_tag.outputs.new_tag }}
-        name: "LNPoS Extension ${{ steps.get_tag.outputs.new_tag }}"
+        name: "LNPoS Extension ${{ steps.get_tag.outputs.new_tag }} (Testing)"
         body: |
           ## LNPoS Extension Release Candidate ${{ steps.get_tag.outputs.new_tag }}
           
-          **Created by Cursor-MCP-MAF**
+          **Created by Cursor-MCP-MAF from branch `${{ github.ref_name }}`**
+          
+          ### ⚠️ FOR TESTING ONLY - DO NOT USE IN PRODUCTION
           
           ### Changes in this RC:
           - ✅ Enhanced extra_json storage with nested "pos" structure
           - ✅ Tax compliance: Store requested fiat amount and currency (addresses [lnbits/lnpos_extension#8](https://github.com/lnbits/lnpos_extension/issues/8))
           - ✅ Improved payment metadata for German/EU tax requirements
-          - ✅ Automatic RC build and release workflow
+          - ✅ Simple implementation using existing LNbits infrastructure
           
           ### Tax Compliance Features:
-          - Stores exact amount entered on device (not just converted amount)
-          - Stores currency used on device (important when device currency differs from wallet)
+          - Stores exact amount entered on device (preserved from original request)
+          - Stores currency used on device 
           - Enables proper tax reporting for EU businesses
           
           ### Extra JSON Structure:
@@ -124,10 +127,16 @@ jobs:
           }
           ```
           
-          ### Installation:
-          This release candidate can be installed in LNbits via the extension management interface.
+          ### Testing Instructions:
+          1. Install this RC in your test LNbits instance
+          2. Create a test LNPoS device
+          3. Make a test payment and verify extra_json contains POS data
+          4. Check that original device amount and currency are preserved
           
-          **Note**: This is a release candidate for testing purposes. Use in production at your own risk.
+          ### Installation:
+          Use the extension management interface in LNbits to install from this release archive.
+          
+          **Ready for testing - merge to main only after testing passes!**
           
         files: lnpos_extension-${{ steps.get_tag.outputs.new_tag }}.zip
         prerelease: true
