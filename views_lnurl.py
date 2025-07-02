@@ -54,15 +54,15 @@ async def lnurl_params(
     price_sat = int(price_sat * ((lnpos.profit / 100) + 1))
     price_msat = price_sat * 1000
 
-    # Store original amount and currency for tax compliance
     lnpos_payment = LnposPayment(
         id=urlsafe_short_hash(),
         lnpos_id=lnpos.id,
         sats=price_sat,
         pin=int(pin),
-        original_amount_cents=float(amount_in_cent),  # Store original amount from device
-        original_currency=lnpos.currency,  # Store device currency
     )
+    # Store original request data for invoice creation
+    lnpos_payment.original_amount_cents = float(amount_in_cent)
+    
     await create_lnpos_payment(lnpos_payment)
     return {
         "tag": "payRequest",
@@ -88,18 +88,17 @@ async def lnurl_callback(request: Request, payment_id: str):
     if not lnpos:
         raise HTTPException(HTTPStatus.NOT_FOUND, detail="lnpos not found.")
 
-    # Create enhanced extra_json with nested pos structure for tax compliance
-    # The callback_url is where users can view their PIN after payment (displaypin URL)
     pin_display_url = str(request.url_for("lnpos.displaypin", payment_id=payment_id))
     
+    # Use preserved original request data for invoice extra_json
     extra_data = {
         "tag": "PoS",
         "pos": {
-            "callback_url": pin_display_url,  # URL where user can view PIN after payment
+            "callback_url": pin_display_url,
             "pin": lnpos_payment.pin,
             "pos_id": lnpos_payment.lnpos_id,
-            "requested_amount": lnpos_payment.original_amount_cents or 0.0,
-            "requested_currency": lnpos_payment.original_currency or lnpos.currency
+            "requested_amount": lnpos_payment.original_amount_cents,
+            "requested_currency": lnpos.currency
         }
     }
 
@@ -117,7 +116,7 @@ async def lnurl_callback(request: Request, payment_id: str):
         "successAction": {
             "tag": "url",
             "description": "Check the attached link for the pin.",
-            "url": pin_display_url,  # Same URL as stored in callback_url
+            "url": pin_display_url,
         },
         "routes": [],
     }

@@ -2,7 +2,7 @@
   "repos": [
     {
       "id": "lnpos",
-      "organisation": "lnbits",
+      "organisation": "Opago-Pay",
       "repository": "lnpos_extension"
     }
   ]
