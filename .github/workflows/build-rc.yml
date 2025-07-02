@@ -143,4 +143,75 @@ jobs:
         prerelease: true
         draft: false
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Update extensions.json with new RC
+      run: |
+        # Get the new tag
+        NEW_TAG="${{ steps.get_tag.outputs.new_tag }}"
+        
+        # Download current extensions.json
+        curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+             -H "Accept: application/vnd.github.v3.raw" \
+             -o extensions.json \
+             "https://api.github.com/repos/Opago-Pay/lnbits-extensions/contents/extensions.json"
+        
+        # Update the JSON file with new RC (replace any existing RC)
+        python3 << EOF
+        import json
+        import sys
+        
+        # Load current extensions
+        with open('extensions.json', 'r') as f:
+            data = json.load(f)
+        
+        new_tag = "$NEW_TAG"
+        archive_url = f"https://github.com/Opago-Pay/lnpos_extension/releases/download/{new_tag}/lnpos_extension-{new_tag}.zip"
+        
+        # Remove any existing lnpos RC entries
+        data['extensions'] = [ext for ext in data['extensions'] if not (ext.get('id') == 'lnpos' and 'rc' in ext.get('version', ''))]
+        
+        # Add new RC entry
+        new_entry = {
+            "id": "lnpos",
+            "repo": "https://github.com/Opago-Pay/lnpos_extension",
+            "name": "LNPoS",
+            "version": new_tag,
+            "min_lnbits_version": "1.1.0",
+            "short_description": "Lightning Point of Sale terminal with tax compliance",
+            "icon": "https://github.com/Opago-Pay/lnpos_extension/raw/main/static/image/lnpos.png",
+            "archive": archive_url,
+            "hash": ""
+        }
+        
+        data['extensions'].append(new_entry)
+        
+        # Save updated JSON
+        with open('extensions.json', 'w') as f:
+            json.dump(data, f, indent=4)
+        
+        print(f"Updated extensions.json with {new_tag}")
+        EOF
+        
+    - name: Commit updated extensions.json
+      run: |
+        # Get current file SHA for update
+        CURRENT_SHA=$(curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                          "https://api.github.com/repos/Opago-Pay/lnbits-extensions/contents/extensions.json" | \
+                          python3 -c "import json, sys; print(json.load(sys.stdin)['sha'])")
+        
+        # Base64 encode the updated file
+        CONTENT=$(base64 -w 0 extensions.json)
+        
+        # Update the file via API
+        curl -X PUT \
+             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+             -H "Accept: application/vnd.github.v3+json" \
+             "https://api.github.com/repos/Opago-Pay/lnbits-extensions/contents/extensions.json" \
+             -d "{
+               \"message\": \"Update lnpos to ${{ steps.get_tag.outputs.new_tag }} - Cursor-MCP-MAF\",
+               \"content\": \"$CONTENT\",
+               \"sha\": \"$CURRENT_SHA\"
+             }"
+        
+        echo "Extensions registry updated with ${{ steps.get_tag.outputs.new_tag }}" 
