@@ -31,3 +31,6 @@ class LnposPayment(BaseModel):
     pin: int
     sats: int
     payment_hash: Optional[str] = None
+    # Tax compliance fields - store original amount and currency from device
+    original_amount_cents: Optional[float] = None
+    original_currency: Optional[str] = None

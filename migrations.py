@@ -32,3 +32,21 @@ async def m001_initial(db):
         );
         """
     )
+
+
+async def m002_add_tax_compliance_fields(db):
+    """
+    Add tax compliance fields to store original amount and currency from device.
+    """
+    await db.execute(
+        """
+        ALTER TABLE lnpos.lnpos_payment 
+        ADD COLUMN original_amount_cents FLOAT;
+        """
+    )
+    await db.execute(
+        """
+        ALTER TABLE lnpos.lnpos_payment 
+        ADD COLUMN original_currency TEXT;
+        """
+    )
