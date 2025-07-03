@@ -117,7 +117,7 @@ async def lnurl_callback(request: Request, payment_id: str):
     extra_data = {
         "tag": "PoS",
         "pos": {
-            "callback_url": str(request.url_for("lnpos.lnurl_callback", payment_id=payment_id)),
+            "pin_url": str(request.url_for("lnpos.displaypin", payment_id=payment_id)),
             "pin": int(pin),
             "pos_id": lnpos_payment.lnpos_id,
             "requested_amount": float(amount_in_cent) / 100,  # Convert cents to currency units
