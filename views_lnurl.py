@@ -27,19 +27,30 @@ async def lnurl_params(
     lnpos_id: str,
     payload: str = Query(..., alias="p"),
 ):
+    logger.info(f"LNURL request received for lnpos_id: {lnpos_id}")
+    logger.info(f"Payload received: {payload}")
+    
     lnpos = await get_lnpos(lnpos_id)
     if not lnpos:
+        logger.error(f"LnPos not found for id: {lnpos_id}")
         raise HTTPException(HTTPStatus.NOT_FOUND, "lnpos not found.")
 
     try:
         aes = AESCipher(lnpos.key)
         msg = aes.decrypt(payload, urlsafe=True)
+        logger.info(f"Decrypted message: {msg}")
     except Exception as e:
-        logger.debug(f"Error decrypting payload: {e}")
-        logger.debug(f"Payload: {payload}")
+        logger.error(f"Error decrypting payload: {e}")
+        logger.error(f"Payload: {payload}")
+        logger.error(f"LnPos key: {lnpos.key}")
         raise HTTPException(HTTPStatus.BAD_REQUEST, "Invalid payload.") from e
 
-    pin, amount_in_cent = msg.split(":")
+    try:
+        pin, amount_in_cent = msg.split(":")
+        logger.info(f"Parsed pin: {pin}, amount_in_cent: {amount_in_cent}")
+    except ValueError as e:
+        logger.error(f"Error parsing decrypted message: {msg}")
+        raise HTTPException(HTTPStatus.BAD_REQUEST, "Invalid payload format.") from e
 
     price_sat = (
         await fiat_amount_as_satoshis(float(amount_in_cent) / 100, lnpos.currency)
@@ -47,10 +58,13 @@ async def lnurl_params(
         else ceil(float(amount_in_cent))
     )
     if price_sat is None:
+        logger.error(f"Price fetch error for amount: {amount_in_cent}, currency: {lnpos.currency}")
         raise HTTPException(HTTPStatus.BAD_REQUEST, detail="Price fetch error.")
 
     price_sat = int(price_sat * ((lnpos.profit / 100) + 1))
     price_msat = price_sat * 1000
+    
+    logger.info(f"Calculated price_sat: {price_sat}, price_msat: {price_msat}")
 
     lnpos_payment = LnposPayment(
         id=urlsafe_short_hash(),
@@ -65,8 +79,19 @@ async def lnurl_params(
     
     callback_url = str(request.url_for("lnpos.lnurl_callback", payment_id=lnpos_payment.id))
     
-    # Fix metadata format - should be the raw JSON string, not the LnurlPayMetadata object
-    metadata_json = f'[["text/plain", "{lnpos.title}"]]'
+    # Ensure metadata is properly formatted JSON string according to LUD-06
+    # Use proper JSON construction to avoid escaping issues
+    import json
+    metadata_array = [["text/plain", lnpos.title]]
+    metadata_json = json.dumps(metadata_array)
+    
+    # Validate metadata JSON
+    try:
+        json.loads(metadata_json)
+        logger.info(f"Metadata JSON is valid: {metadata_json}")
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid metadata JSON: {metadata_json}, error: {e}")
+        raise HTTPException(HTTPStatus.INTERNAL_SERVER_ERROR, "Invalid metadata format.")
     
     response_data = {
         "tag": "payRequest",
@@ -76,7 +101,21 @@ async def lnurl_params(
         "metadata": metadata_json,
     }
     
-    logger.debug(f"LNURL response for {lnpos_id}: {response_data}")
+    logger.info(f"LNURL-pay response for {lnpos_id}:")
+    logger.info(f"  tag: {response_data['tag']}")
+    logger.info(f"  callback: {response_data['callback']}")
+    logger.info(f"  minSendable: {response_data['minSendable']}")
+    logger.info(f"  maxSendable: {response_data['maxSendable']}")
+    logger.info(f"  metadata: {response_data['metadata']}")
+    
+    # Validate the complete response
+    required_fields = ["tag", "callback", "minSendable", "maxSendable", "metadata"]
+    for field in required_fields:
+        if field not in response_data:
+            logger.error(f"Missing required field: {field}")
+            raise HTTPException(HTTPStatus.INTERNAL_SERVER_ERROR, f"Missing required field: {field}")
+    
+    logger.info(f"Complete LNURL-pay response: {response_data}")
     
     return response_data
 
