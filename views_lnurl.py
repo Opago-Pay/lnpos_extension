@@ -31,8 +31,6 @@ async def lnurl_params(
     if not lnpos:
         raise HTTPException(HTTPStatus.NOT_FOUND, "lnpos not found.")
 
-    if len(payload) % 22 != 0:
-        raise HTTPException(HTTPStatus.BAD_REQUEST, "Invalid payload length.")
     try:
         aes = AESCipher(lnpos.key)
         msg = aes.decrypt(payload, urlsafe=True)
@@ -64,15 +62,23 @@ async def lnurl_params(
     lnpos_payment.original_amount_cents = float(amount_in_cent)
     
     await create_lnpos_payment(lnpos_payment)
-    return {
+    
+    callback_url = str(request.url_for("lnpos.lnurl_callback", payment_id=lnpos_payment.id))
+    
+    # Fix metadata format - should be the raw JSON string, not the LnurlPayMetadata object
+    metadata_json = f'[["text/plain", "{lnpos.title}"]]'
+    
+    response_data = {
         "tag": "payRequest",
-        "callback": str(
-            request.url_for("lnpos.lnurl_callback", payment_id=lnpos_payment.id)
-        ),
+        "callback": callback_url,
         "minSendable": price_msat,
         "maxSendable": price_msat,
-        "metadata": lnpos.lnurlpay_metadata,
+        "metadata": metadata_json,
     }
+    
+    logger.debug(f"LNURL response for {lnpos_id}: {response_data}")
+    
+    return response_data
 
 
 @lnpos_lnurl_router.get(
@@ -80,13 +86,25 @@ async def lnurl_params(
     status_code=HTTPStatus.OK,
     name="lnpos.lnurl_callback",
 )
-async def lnurl_callback(request: Request, payment_id: str):
+async def lnurl_callback(
+    request: Request, 
+    payment_id: str,
+    amount: int = Query(..., description="Amount in millisatoshis")
+):
     lnpos_payment = await get_lnpos_payment(payment_id)
     if not lnpos_payment:
         raise HTTPException(HTTPStatus.NOT_FOUND, detail="lnpos_payment not found.")
     lnpos = await get_lnpos(lnpos_payment.lnpos_id)
     if not lnpos:
         raise HTTPException(HTTPStatus.NOT_FOUND, detail="lnpos not found.")
+
+    # Validate amount matches expected amount
+    expected_amount_msat = lnpos_payment.sats * 1000
+    if amount != expected_amount_msat:
+        raise HTTPException(
+            HTTPStatus.BAD_REQUEST, 
+            detail=f"Amount mismatch. Expected {expected_amount_msat} msat, got {amount} msat"
+        )
 
     pin_display_url = str(request.url_for("lnpos.displaypin", payment_id=payment_id))
     

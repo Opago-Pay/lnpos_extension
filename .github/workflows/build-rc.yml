@@ -2,9 +2,8 @@ name: Build RC Release
 
 on:
   push:
-    branches: 
-      - 'feature/**'  # Trigger on feature branches for testing
-  workflow_dispatch:
+    branches:
+      - 'feature/**'
 
 jobs:
   build-rc:
@@ -12,206 +11,68 @@ jobs:
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-        
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-        
-    - name: Install dependencies
+      uses: actions/checkout@v3
+      
+    - name: Get latest RC version
+      id: get_version
       run: |
-        python -m pip install --upgrade pip
-        if [ -f "pyproject.toml" ]; then
-          pip install poetry
-          poetry install --only dev || echo "No dev dependencies configured"
-        fi
-        
-    - name: Run tests (if configured)
-      run: |
-        if [ -f "pyproject.toml" ] && command -v poetry &> /dev/null; then
-          poetry run pytest --verbose || echo "Tests not configured or failed - continuing"
-        else
-          echo "No test configuration found - skipping tests"
-        fi
-        
-    - name: Get latest RC tag and create new one
-      id: get_tag
-      run: |
-        # Get the latest RC tag for v1.0.1
-        LATEST_RC=$(git tag -l "v1.0.1-rc.*" | sort -V | tail -1)
+        # Get latest release tags
+        LATEST_RC=$(curl -s "https://api.github.com/repos/${{ github.repository }}/releases" | jq -r '[.[] | select(.tag_name | test("v[0-9]+\\.[0-9]+\\.[0-9]+-rc\\.[0-9]+")) | .tag_name] | .[0] // empty')
         
         if [ -z "$LATEST_RC" ]; then
-          # No RC tags exist, start with rc.1
-          NEW_TAG="v1.0.1-rc.1"
+          # No RC found, start with rc.1
+          NEW_RC="v1.0.1-rc.1"
         else
           # Extract RC number and increment
-          RC_NUM=$(echo $LATEST_RC | sed 's/v1\.0\.1-rc\.//')
+          RC_NUM=$(echo $LATEST_RC | grep -o 'rc\.\([0-9]\+\)' | grep -o '[0-9]\+')
           NEW_RC_NUM=$((RC_NUM + 1))
-          NEW_TAG="v1.0.1-rc.$NEW_RC_NUM"
+          NEW_RC="v1.0.1-rc.$NEW_RC_NUM"
         fi
         
-        echo "new_tag=$NEW_TAG" >> $GITHUB_OUTPUT
-        echo "Creating new RC tag: $NEW_TAG for testing"
-        
-    - name: Create and push RC tag
+        echo "new_rc=$NEW_RC" >> $GITHUB_OUTPUT
+        echo "Creating RC version: $NEW_RC"
+    
+    - name: Create archive
       run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git tag -a ${{ steps.get_tag.outputs.new_tag }} -m "Release candidate ${{ steps.get_tag.outputs.new_tag }} from ${{ github.ref_name }} - Created by Cursor-MCP-MAF"
-        git push origin ${{ steps.get_tag.outputs.new_tag }}
+        # Create a directory with the extension name
+        mkdir -p lnpos_extension
         
-    - name: Create release archive
-      run: |
-        # Create archive with proper directory structure for LNbits
-        EXTENSION_NAME="lnpos_extension-${{ steps.get_tag.outputs.new_tag }}"
+        # Copy all files except .git, .github, and other build artifacts
+        rsync -av --exclude='.git' --exclude='.github' --exclude='*.zip' --exclude='__pycache__' --exclude='*.pyc' . lnpos_extension/
         
-        # Create the extension directory
-        mkdir -p "$EXTENSION_NAME"
+        # Create the zip archive
+        zip -r lnpos_extension-${{ steps.get_version.outputs.new_rc }}.zip lnpos_extension/
         
-        # Copy all files except those we want to exclude
-        rsync -av --progress . "$EXTENSION_NAME"/ \
-          --exclude='.git' \
-          --exclude='.github' \
-          --exclude='node_modules' \
-          --exclude='__pycache__' \
-          --exclude='*.pyc' \
-          --exclude='.pytest_cache' \
-          --exclude='.coverage' \
-          --exclude='dist' \
-          --exclude='build' \
-          --exclude='.env' \
-          --exclude="$EXTENSION_NAME"
-          
-        # Create the archive with proper directory structure
-        zip -r "$EXTENSION_NAME.zip" "$EXTENSION_NAME"
-        
-        # Clean up
-        rm -rf "$EXTENSION_NAME"
-        
-    - name: Create GitHub Release
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: ${{ steps.get_tag.outputs.new_tag }}
-        name: "LNPoS Extension ${{ steps.get_tag.outputs.new_tag }} (Testing)"
-        body: |
-          ## LNPoS Extension Release Candidate ${{ steps.get_tag.outputs.new_tag }}
-          
-          **Created by Cursor-MCP-MAF from branch `${{ github.ref_name }}`**
-          
-          ### ⚠️ FOR TESTING ONLY - DO NOT USE IN PRODUCTION
-          
-          ### Changes in this RC:
-          - ✅ Enhanced extra_json storage with nested "pos" structure
-          - ✅ Tax compliance: Store requested fiat amount and currency (addresses [lnbits/lnpos_extension#8](https://github.com/lnbits/lnpos_extension/issues/8))
-          - ✅ Improved payment metadata for German/EU tax requirements
-          - ✅ Simple implementation using existing LNbits infrastructure
-          
-          ### Tax Compliance Features:
-          - Stores exact amount entered on device (preserved from original request)
-          - Stores currency used on device 
-          - Enables proper tax reporting for EU businesses
-          
-          ### Extra JSON Structure:
-          ```json
-          {
-            "tag": "PoS",
-            "pos": {
-              "callback_url": "https://domain.com/lnpos/displaypin/payment123",
-              "pin": 1234,
-              "pos_id": "abc123", 
-              "requested_amount": 15.50,
-              "requested_currency": "EUR"
-            }
-          }
-          ```
-          
-          ### Testing Instructions:
-          1. Install this RC in your test LNbits instance
-          2. Create a test LNPoS device
-          3. Make a test payment and verify extra_json contains POS data
-          4. Check that original device amount and currency are preserved
-          
-          ### Installation:
-          Use the extension management interface in LNbits to install from this release archive.
-          
-          **Ready for testing - merge to main only after testing passes!**
-          
-        files: lnpos_extension-${{ steps.get_tag.outputs.new_tag }}.zip
-        prerelease: true
-        draft: false
+        # Verify archive contents
+        echo "Archive contents:"
+        unzip -l lnpos_extension-${{ steps.get_version.outputs.new_rc }}.zip
+    
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        
-    - name: Update extensions.json with new RC
-      run: |
-        # Get the new tag
-        NEW_TAG="${{ steps.get_tag.outputs.new_tag }}"
-        
-        # Download current extensions.json
-        curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-             -H "Accept: application/vnd.github.v3.raw" \
-             -o extensions.json \
-             "https://api.github.com/repos/Opago-Pay/lnbits-extensions/contents/extensions.json"
-        
-        # Update the JSON file with new RC (replace any existing RC)
-        python3 << EOF
-        import json
-        import sys
-        
-        # Load current extensions
-        with open('extensions.json', 'r') as f:
-            data = json.load(f)
-        
-        new_tag = "$NEW_TAG"
-        archive_url = f"https://github.com/Opago-Pay/lnpos_extension/releases/download/{new_tag}/lnpos_extension-{new_tag}.zip"
-        
-        # Remove any existing lnpos RC entries
-        data['extensions'] = [ext for ext in data['extensions'] if not (ext.get('id') == 'lnpos' and 'rc' in ext.get('version', ''))]
-        
-        # Add new RC entry
-        new_entry = {
-            "id": "lnpos",
-            "repo": "https://github.com/Opago-Pay/lnpos_extension",
-            "name": "LNPoS",
-            "version": new_tag,
-            "min_lnbits_version": "1.1.0",
-            "short_description": "Lightning Point of Sale terminal with tax compliance",
-            "icon": "https://github.com/Opago-Pay/lnpos_extension/raw/main/static/image/lnpos.png",
-            "archive": archive_url,
-            "hash": ""
-        }
-        
-        data['extensions'].append(new_entry)
-        
-        # Save updated JSON
-        with open('extensions.json', 'w') as f:
-            json.dump(data, f, indent=4)
-        
-        print(f"Updated extensions.json with {new_tag}")
-        EOF
-        
-    - name: Commit updated extensions.json
-      run: |
-        # Get current file SHA for update
-        CURRENT_SHA=$(curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-                          "https://api.github.com/repos/Opago-Pay/lnbits-extensions/contents/extensions.json" | \
-                          python3 -c "import json, sys; print(json.load(sys.stdin)['sha'])")
-        
-        # Base64 encode the updated file
-        CONTENT=$(base64 -w 0 extensions.json)
-        
-        # Update the file via API
-        curl -X PUT \
-             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-             -H "Accept: application/vnd.github.v3+json" \
-             "https://api.github.com/repos/Opago-Pay/lnbits-extensions/contents/extensions.json" \
-             -d "{
-               \"message\": \"Update lnpos to ${{ steps.get_tag.outputs.new_tag }} - Cursor-MCP-MAF\",
-               \"content\": \"$CONTENT\",
-               \"sha\": \"$CURRENT_SHA\"
-             }"
-        
-        echo "Extensions registry updated with ${{ steps.get_tag.outputs.new_tag }}" 
+      with:
+        tag_name: ${{ steps.get_version.outputs.new_rc }}
+        release_name: Release ${{ steps.get_version.outputs.new_rc }}
+        body: |
+          Release Candidate ${{ steps.get_version.outputs.new_rc }}
+          
+          Auto-generated RC build from feature branch: ${{ github.ref_name }}
+          Commit: ${{ github.sha }}
+          
+          Created by Cursor-MCP-MAF automation
+          
+          **Manual registry update required**
+        draft: false
+        prerelease: true
+    
+    - name: Upload Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./lnpos_extension-${{ steps.get_version.outputs.new_rc }}.zip
+        asset_name: lnpos_extension-${{ steps.get_version.outputs.new_rc }}.zip
+        asset_content_type: application/zip 
