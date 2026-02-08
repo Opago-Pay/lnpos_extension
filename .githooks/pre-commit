@@ -1,0 +1,21 @@
+#!/bin/sh
+# Secret scrubber pre-commit hook (Safety version)
+SENSITIVE_FILES=".age-identity .age-key *.key *.pem"
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null)
+[ -z "$STAGED_FILES" ] && exit 0
+CLEANED=0
+for file in $STAGED_FILES; do
+    [ -z "$file" ] && continue
+    [ ! -f "$file" ] && continue
+    MATCH=0
+    case "$(basename "$file")" in .age-identity|.age-key|*.key|*.pem) MATCH=1 ;; esac
+    [ "$MATCH" -eq 0 ] && continue
+    echo "[secret-scrubber] Detected sensitive file in staging: $file"
+    git rm --cached -f "$file" 2>/dev/null
+    echo "[secret-scrubber]   -> Removed $file from staging"
+    CLEANED=$((CLEANED + 1))
+done
+if [ "$CLEANED" -gt 0 ]; then
+    echo "[secret-scrubber] Scrubbed $CLEANED sensitive file(s) from commit"
+fi
+exit 0
